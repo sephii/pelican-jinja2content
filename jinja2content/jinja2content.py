@@ -1,35 +1,43 @@
+import logging
 import os
 
 from pelican import signals
-from pelican import contents
 
 from jinja2 import Environment, ChoiceLoader, FileSystemLoader
+from pelican.readers import MarkdownReader
+from pelican.utils import pelican_open
+
+_LOGGER = logging.getLogger(__name__)
 
 
-def execjinja2(instance):
-    if type(instance) in (contents.Article, contents.Page):
+class JinjaMarkdownReader(MarkdownReader):
+    def parse_jinja(self, text):
         base_path = os.path.dirname(os.path.abspath(__file__))
         jinja2_env = Environment(
             trim_blocks=True,
             lstrip_blocks=True,
             loader=ChoiceLoader([
                 FileSystemLoader(
-                    os.path.join(base_path, instance.settings['THEME'],
-                                 'templates')
+                    os.path.join(base_path, self.settings['THEME'], 'templates')
                 ),
             ]),
-            extensions=instance.settings['JINJA_EXTENSIONS'],
+            extensions=self.settings['JINJA_EXTENSIONS'],
         )
-        jinja2_template = jinja2_env.from_string(instance._content)
 
-        kwargs = instance._context
-        if type(instance) is contents.Article:
-            kwargs['article'] = instance
-        elif type(instance) is contents.Page:
-            kwargs['page'] = instance
+        return jinja2_env.from_string(text).render(self.settings)
 
-        instance._content = jinja2_template.render(**kwargs)
+    def read(self, source_path):
+        _, metadata = super(JinjaMarkdownReader, self).read(source_path)
+
+        with pelican_open(source_path) as text:
+            content = self._md.convert(self.parse_jinja(text))
+
+        return content, metadata
+
+
+def add_reader(readers):
+    readers.reader_classes['md'] = JinjaMarkdownReader
 
 
 def register():
-    signals.content_object_init.connect(execjinja2)
+    signals.readers_init.connect(add_reader)
